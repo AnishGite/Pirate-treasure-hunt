@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pirate Treasure Hunt</title>
+    <style>
+        body {
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #123456;
+            font-family: 'Arial', sans-serif;
+        }
+        .game-container {
+            position: relative;
+        }
+        canvas {
+            border: 4px solid #8B4513;
+            border-radius: 8px;
+            image-rendering: pixelated;
+        }
+        .score-display {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 20px;
+            text-shadow: 2px 2px 2px black;
+        }
+        .audio-controls {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .volume-slider {
+            width: 100px;
+            cursor: pointer;
+        }
+        .mute-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .mute-btn.muted {
+            background: #ff4444;
+        }
+        .game-over {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .restart-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div class="score-display">Score: <span id="score">0</span></div>
+        <div class="audio-controls">
+            <button id="muteBtn" class="mute-btn">🔊</button>
+            <input type="range" id="volumeSlider" class="volume-slider" min="0" max="1" step="0.1" value="0.5">
+        </div>
+        <div id="gameOver" class="game-over">
+            <h2>Game Over!</h2>
+            <p>Final Score: <span id="finalScore">0</span></p>
+            <button class="restart-btn" onclick="restartGame()">Play Again</button>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreElement = document.getElementById('score');
+        const gameOverElement = document.getElementById('gameOver');
+        const finalScoreElement = document.getElementById('finalScore');
+
+        // Audio setup
+        const backgroundMusic = new Audio('https://upload.wikimedia.org/wikipedia/commons/e/e6/Ff7-boss.ogg');
+        backgroundMusic.loop = true;
+        let isMuted = false;
+
+        const muteBtn = document.getElementById('muteBtn');
+        const volumeSlider = document.getElementById('volumeSlider');
+
+        // Audio control functions
+        function initAudio() {
+            backgroundMusic.volume = volumeSlider.value;
+            
+            // Start playing on user interaction
+            document.addEventListener('click', () => {
+                if (!backgroundMusic.playing) {
+                    backgroundMusic.play().catch(error => {
+                        console.log("Audio playback failed:", error);
+                    });
+                }
+            }, { once: true });
+
+            muteBtn.addEventListener('click', toggleMute);
+            volumeSlider.addEventListener('input', updateVolume);
+        }
+
+        function toggleMute() {
+            isMuted = !isMuted;
+            backgroundMusic.muted = isMuted;
+            muteBtn.textContent = isMuted ? '🔇' : '🔊';
+            muteBtn.classList.toggle('muted', isMuted);
+        }
+
+        function updateVolume() {
+            backgroundMusic.volume = volumeSlider.value;
+            if (backgroundMusic.volume > 0 && isMuted) {
+                toggleMute();
+            }
+        }
+
+        // Water animation properties
+        const waves = [];
+        const WAVE_COUNT = 5;
+        const WAVE_HEIGHT = 30;
+        const WAVE_LENGTH = canvas.width;
+        let waterOffset = 0;
+
+        // Initialize waves
+        for (let i = 0; i < WAVE_COUNT; i++) {
+            waves.push({
+                offset: i * (canvas.height / WAVE_COUNT),
+                speed: 0.5 + Math.random() * 0.5
+            });
+        }
+
+        // Game objects
+        const ship = {
+            x: canvas.width / 2,
+            y: canvas.height - 60,
+            width: 50,
+            height: 50,
+            speed: 5
+        };
+
+        let treasures = [];
+        let rocks = [];
+        let score = 0;
+        let isGameOver = false;
+        let gameLoop;
+
+        const keys = {};
+        document.addEventListener('keydown', (e) => keys[e.code] = true);
+        document.addEventListener('keyup', (e) => keys[e.code] = false);
+
+        function drawPixel(x, y, size, color) {
+            ctx.fillStyle = color;
+            ctx.fillRect(Math.floor(x), Math.floor(y), size, size);
+        }
+
+        function drawWaterBackground() {
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, '#1E90FF');
+            gradient.addColorStop(1, '#0000CD');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 2;
+
+            waves.forEach(wave => {
+                ctx.beginPath();
+                for (let x = 0; x < canvas.width; x += 20) {
+                    const y = wave.offset + 
+                            Math.sin((x + waterOffset * wave.speed) / 60) * WAVE_HEIGHT;
+                    if (x === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                }
+                ctx.stroke();
+            });
+
+            waterOffset += 1;
+        }
+
+        function drawShip() {
+            ctx.fillStyle = '#8B4513';
+            ctx.beginPath();
+            ctx.moveTo(ship.x, ship.y + ship.height);
+            ctx.lineTo(ship.x + ship.width, ship.y + ship.height);
+            ctx.lineTo(ship.x + ship.width/2, ship.y);
+            ctx.closePath();
+            ctx.fill();
+
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.moveTo(ship.x + ship.width/2, ship.y + 10);
+            ctx.lineTo(ship.x + ship.width/2 + 15, ship.y + ship.height/2);
+            ctx.lineTo(ship.x + ship.width/2, ship.y + ship.height/2);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawPixelChest(x, y, width, height) {
+            const pixelSize = width / 16;
+            
+            const colors = {
+                darkBrown: '#8B4513',
+                brown: '#A0522D',
+                lightBrown: '#CD853F',
+                gold: '#FFD700',
+                darkGold: '#DAA520'
+            };
+
+            for (let row = 0; row < height/pixelSize; row++) {
+                for (let col = 0; col < width/pixelSize; col++) {
+                    let color = colors.brown;
+                    
+                    if ((col === 0 || col === width/pixelSize-1) && 
+                        (row === 0 || row === height/pixelSize-1)) {
+                        color = colors.gold;
+                    }
+                    
+                    if ((col === 0 || col === width/pixelSize-1) && 
+                        row > 0 && row < height/pixelSize-1) {
+                        color = colors.gold;
+                    }
+                    
+                    if ((row === Math.floor(height/pixelSize/2)) && 
+                        col > 0 && col < width/pixelSize-1) {
+                        color = colors.darkGold;
+                    }
+                    
+                    if (row % 3 === 1) {
+                        color = colors.darkBrown;
+                    }
+                    
+                    if (row === Math.floor(height/pixelSize/2) && 
+                        col === Math.floor(width/pixelSize/2)) {
+                        color = colors.gold;
+                    }
+
+                    drawPixel(
+                        x + col * pixelSize,
+                        y + row * pixelSize,
+                        pixelSize,
+                        color
+                    );
+                }
+            }
+        }
+
+        function drawRockSprite(x, y, width, height) {
+            ctx.beginPath();
+            ctx.moveTo(x + width/2, y);
+            
+            ctx.quadraticCurveTo(x + width * 0.8, y + height * 0.3, x + width, y + height * 0.6);
+            ctx.quadraticCurveTo(x + width * 0.9, y + height * 0.9, x + width * 0.7, y + height);
+            ctx.quadraticCurveTo(x + width * 0.4, y + height * 1.1, x + width * 0.2, y + height);
+            ctx.quadraticCurveTo(x, y + height * 0.7, x, y + height * 0.4);
+            ctx.quadraticCurveTo(x + width * 0.2, y + height * 0.1, x + width/2, y);
+            
+            const gradient = ctx.createRadialGradient(
+                x + width * 0.3, y + height * 0.3, width * 0.1,
+                x + width * 0.5, y + height * 0.5, width * 0.8
+            );
+            gradient.addColorStop(0, '#A0A0A0');
+            gradient.addColorStop(0.5, '#808080');
+            gradient.addColorStop(1, '#606060');
+            
+            ctx.fillStyle = gradient;
+            ctx.fill();
+            
+            ctx.strokeStyle = '#505050';
+            ctx.lineWidth = 1;
+            
+            for(let i = 0; i < 3; i++) {
+                ctx.beginPath();
+                const startX = x + Math.random() * width;
+                const startY = y + Math.random() * height;
+                ctx.moveTo(startX, startY);
+                ctx.lineTo(startX + (Math.random() - 0.5) * 20, startY + (Math.random() - 0.5) * 20);
+                ctx.stroke();
+            }
+        }
+
+        function createTreasure() {
+            if (Math.random() < 0.02) {
+                treasures.push({
+                    x: Math.random() * (canvas.width - 30),
+                    y: -30,
+                    width: 40,
+                    height: 30,
+                    speed: 2
+                });
+            }
+        }
+
+        function createRock() {
+            if (Math.random() < 0.01) {
+                rocks.push({
+                    x: Math.random() * (canvas.width - 40),
+                    y: -40,
+                    width: 40,
+                    height: 40,
+                    speed: 3
+                });
+            }
+        }
+
+        function drawTreasures() {
+            treasures.forEach(treasure => {
+                drawPixelChest(treasure.x, treasure.y, treasure.width, treasure.height);
+            });
+        }
+
+        function drawRocks() {
+            rocks.forEach(rock => {
+                drawRockSprite(rock.x, rock.y, rock.width, rock.height);
+            });
+        }
+
+        function checkCollisions() {
+            treasures = treasures.filter(treasure => {
+                if (ship.x < treasure.x + treasure.width &&
+                    ship.x + ship.width > treasure.x &&
+                    ship.y < treasure.y + treasure.height &&
+                    ship.y + ship.height > treasure.y) {
+                    score += 10;
+                    scoreElement.textContent = score;
+                    return false;
+                }
+                return treasure.y < canvas.height;
+            });
+
+            rocks.forEach(rock => {
+                if (ship.x < rock.x + rock.width &&
+                    ship.x + ship.width > rock.x &&
+                    ship.y < rock.y + rock.height &&
+                    ship.y + ship.height > rock.y) {
+                    gameOver();
+                }
+            });
+        }
+
+        function gameOver() {
+            isGameOver = true;
+            finalScoreElement.textContent = score;
+            gameOverElement.style.display = 'block';
+            clearInterval(gameLoop);
+        }
+
+        function restartGame() {
+            isGameOver = false;
+            score = 0;
+            scoreElement.textContent = score;
+            gameOverElement.style.display = 'none';
+            ship.x = canvas.width / 2;
+            treasures = [];
+            rocks = [];
+            
+            // Ensure music is playing when game restarts
+            if (!isMuted && backgroundMusic.paused) {
+                backgroundMusic.play().catch(error => {
+                    console.log("Audio playback failed:", error);
+                });
+            }
+            
+            gameLoop = setInterval(update, 1000/60);
+        }
+
+        function update() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawWaterBackground();
+
+            if (keys['ArrowLeft'] && ship.x > 0) ship.x -= ship.speed;
+            if (keys['ArrowRight'] && ship.x < canvas.width - ship.width) ship.x += ship.speed;
+
+            treasures.forEach(treasure => treasure.y += treasure.speed);
+            rocks.forEach(rock => rock.y += rock.speed);
+
+            createTreasure();
+            createRock();
+
+            drawShip();
+            drawTreasures();
+            drawRocks();
+
+            checkCollisions();
+        }
+
+        // Initialize audio and start game
+        initAudio();
+        gameLoop = setInterval(update, 1000/60);
+    </script>
+</body>
+</html>
